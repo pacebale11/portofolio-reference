@@ -1,0 +1,10 @@
+.terraform
+.terraform.lock.hcl
+
+# Editor files
+.idea
+*.swp
+
+# Mac temporary file
+.DS_Store
+.DS_Store

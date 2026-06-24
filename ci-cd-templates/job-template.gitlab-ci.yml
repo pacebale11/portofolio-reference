@@ -1,0 +1,4 @@
+include:
+  - local: templates/deployment.gitlab-ci.yml
+  - local: templates/kaniko.gitlab-ci.yml
+  - local: sast-template.gitlab-ci.yml

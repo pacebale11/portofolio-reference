@@ -1,0 +1,57 @@
+include:
+  - local: templates/common.gitlab-ci.yml
+
+# Kaniko template
+# variables:
+#   Required:
+#   DOCKER_UPLOAD_SERVICE_ACCOUNT
+#                 google service account
+#                 for docker image upload authentication
+# Optional
+#   DOCKERFILE    path of dockerfile location related to your root
+#                 project directory tree (default: ./Dockerfile)
+#   IMAGE_REPO    (default: see .common_variables in templates/common.gitlab-ci.yml)
+#   IMAGE_TAG     (default: see .common_variables in templates/common.gitlab-ci.yml)
+#   SERVICE_NAME  (default: see .common_variables in templates/common.gitlab-ci.yml)
+#   DISABLE_CACHE (default: false) Set "true" to disable cache when building container image
+#   KANIKO_ARGUMENTS_XXX  Add more kaniko executor args that will be appended during kaniko executor execution
+#
+#   SERVICE_NAME, IMAGE_REPO and IMAGE_TAG will be concatenated such as `$IMAGE_REPO/$SERVICE_NAME:$IMAGE_TAG`
+#   become full docker image name.
+#
+#   variables:
+#     KANIKO_ARGUMENTS_1: --build-arg MY_VAR='value with spaces'
+
+.kaniko-template:
+  extends:
+    - .common_variables
+    - .kaniko-image
+  stage: build
+  tags:
+    - host-staging
+  id_tokens:
+    ID_TOKEN_OIDC_GCP:
+      aud: https://gitlab.com
+  variables:
+    DOCKERFILE: Dockerfile
+  script:
+    - echo ${ID_TOKEN_OIDC_GCP} > .ci_job_jwt_file
+    - |
+      cat << EOF > gcp_temp_cred.json
+      {
+        "type": "external_account",
+        "audience": "//iam.googleapis.com/${GCP_WORKLOAD_IDENTITY_PROVIDER}",
+        "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+        "token_url": "https://sts.googleapis.com/v1/token",
+        "credential_source": {
+          "file": ".ci_job_jwt_file"
+        },
+        "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${DOCKER_UPLOAD_SERVICE_ACCOUNT}:generateAccessToken"
+      }
+      EOF
+    - >-
+      GOOGLE_APPLICATION_CREDENTIALS=gcp_temp_cred.json
+      /workspace/scripts/shell/executor
+      --context "${CI_PROJECT_DIR}"
+      --dockerfile "${CI_PROJECT_DIR}/${DOCKERFILE}"
+      --destination "${IMAGE_REPO}/${SERVICE_NAME}:${IMAGE_TAG}"

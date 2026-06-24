@@ -1,0 +1,93 @@
+include:
+  - local: templates/common.gitlab-ci.yml
+
+########################################################################################################################
+# Deployment template
+# variables:
+#   Required: CALLER JOB REQUIRE TO PROVIDE THESE VARIABLES
+#     ENV:                  which environment is this deployment refering to
+#     KUBERNETES_CLUSTER    where the service will be deployed, refer to files defined in $KUBERNETES_CONFIG
+#     KUBERNETES_TOKEN      typically suplied from Gitlab CI/CD Variables
+#   Optional
+#     HELM_CHART_NAME       chart used for helm deployment (default: host-helm-charts/k8s-service)
+#     HELM_CHART_VERSION    chart version used for helm deployment tree (default: 0.3.3)
+#     KUBERNETES_NAMESPACE  namespace where service deployed (default: $CI_PROJECT_NAME)
+#     NAME                  name of the service that will be used in helm resource naming (default: $CI_PROJECT_NAME)
+#     KUBERNETES_CONFIG     where to read kubectl config files (default: k8s-deploy/clusters/kubeconfig.yml)
+#     HELM_VALUE_XXX        Add 1 or more --values args by using HELM_VALUE_XX: values.path
+#     HELM_VALUE_XXX        Add 1 or more --args args by using HELM_SET_XXX: k=v
+#     IMAGE_REPO (see .common_variables)
+#     IMAGE_TAG (see .common_variables)
+#
+# Below you can see where the variable is used during helm command construction
+#
+# helm ${CMD} ${NAME}-${ENV} ${HELM_CHART_NAME} \
+#     --version ${HELM_CHART_VERSION} \
+#     --kube-token ${KUBERNETES_TOKEN} \
+#     --kube-context ${KUBERNETES_CLUSTER} \
+#     --kubeconfig ${KUBERNETES_CONFIG} \
+#     --namespace ${KUBERNETES_NAMESPACE} \
+#     --values ${HELM_VALUE_X}
+#     --values ${HELM_VALUE_Y}
+#     --values ${HELM_VALUE_...}
+#     --set ${HELM_SET_X}
+#     --set ${HELM_SET_Y}
+#     --set ${HELM_SET_...}
+
+.deploy-helm:
+  extends:
+    - .common_variables
+    - .deployment-image
+  stage: deployment
+  variables:
+    HELM_CHART_NAME: ${CHART_NAME}
+    HELM_CHART_VERSION: ${CHART_VERSION}
+    KUBERNETES_NAMESPACE: ${CI_PROJECT_NAME}
+    KUBERNETES_CONFIG: /app/kubeconfig.yaml
+    BEFORE_SCRIPT_PATH: /app/scripts/shell/before_script.sh
+    NAME: ${CI_PROJECT_NAME}
+  environment: $KUBERNETES_CLUSTER
+  tags:
+    - $ENV
+  before_script:
+    - ${BEFORE_SCRIPT_PATH}
+  script:
+    - helm repo add host-helm-charts https://infra-host-helm-charts.storage.googleapis.com 
+    - helm repo update
+    - helm_upgrade.sh
+  when: on_success
+
+.rollback-deployment:
+  script:
+    - |
+      if [ ! -d "artifacts" -o ! -f "artifacts/versions.yml" ]; then
+        echo "no rollback manifests found!\n"
+        exit 1;
+      fi
+    - |
+      if [ "$DEBUG" == "true" ]; then
+        printf "will rollback release %s to version %s" $(yq '.name +" "+ .version' artifacts/versions.yml)
+        echo -e "helm rollback $(yq '.name +" "+ .version' artifacts/versions.yml)"
+      else
+        /app/scripts/shell/helm rollback $(yq '.name +" "+ .version' artifacts/versions.yml)
+      fi
+
+deploy-job-generator:
+  extends:
+    - .deployment-image
+  tags:
+    - host-himem
+  stage: .pre
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline"'
+      when: never
+    - exists:
+        - deployment.y{a,}ml
+  script:
+    - deploy.py generate ci
+    - echo "generated $(ls artifacts | wc -l) files"
+    - ls -l artifacts
+  artifacts:
+    paths:
+      - artifacts/
+    expire_in: '30 days'

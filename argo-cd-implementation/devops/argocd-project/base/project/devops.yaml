@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: devops
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: All application related to Devops
+  sourceRepos:
+  - 'https://git.example.com/devops/kubernetes-manifest.git'
+  - 'https://helm.datadoghq.com'
+  # - 'https://jaegertracing.github.io/helm-charts'
+  - 'https://k8s-at-home.com/charts/'
+  - 'https://charts.gitlab.io'
+  destinations:
+  - namespace: '*'
+    name: in-cluster
+  clusterResourceWhitelist:
+  - group: '*'
+    kind: '*'

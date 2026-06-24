@@ -1,0 +1,49 @@
+.set-authentication-template:
+  before_script:
+    - echo -e "[url \"https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/\"]\n\tinsteadOf = https://gitlab.com/" | tee -a ~/.gitconfig
+
+variables:
+  DEPLOYMENT_IMAGE_VERSION: 0.8.7
+  KANIKO_IMAGE_VERSION: v1.21.1-patch1
+
+.deployment-image:
+  image: ${CI_REGISTRY_UTILS}/deployment:${DEPLOYMENT_IMAGE_VERSION}
+
+.kaniko-image:
+  image: ${CI_REGISTRY_UTILS}/kaniko:${KANIKO_IMAGE_VERSION}
+
+.common_variables:
+  variables:
+    IMAGE_REPO: $CI_REGISTRY/$CI_PROJECT_PATH
+    IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+    SERVICE_NAME: $CI_PROJECT_NAME
+    CHART_NAME: host-helm-charts/k8s-service
+    CHART_VERSION: 0.3.5
+
+.download-repository:
+  stage: before-ci
+  extends:
+    - .set-authentication-template
+    - .deployment-image
+  tags:
+  artifacts:
+    paths:
+      - k8s-deploy/
+    expire_in: 7 days
+  script:
+    - >
+      if command -v peru 2> /dev/null; then
+        echo 'peru found';
+      else
+        echo 'missing peru executables';
+        exit 1;
+      fi
+    - peru sync --force
+
+.download-repository-files:
+  stage: before-ci
+  extends: .download-repository
+  rules:
+    - if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"
+    - if: "$CI_COMMIT_BRANCH =~ /^release.+/"
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'

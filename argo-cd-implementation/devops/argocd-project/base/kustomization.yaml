@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: argocd
+
+# need to write all files in projects and application until glob feature re-enabled in kustomize
+resources:
+- project/application-management.yaml
+- project/bank-as-a-service.yaml
+- project/bds.yaml
+- project/bill-payment.yaml
+- project/cfpp.yaml
+- project/devops.yaml
+- project/orchestrator.yaml
+- project/platformbanking.yaml
+- project/qris.yaml
+- project/recurring.yaml
+- project/sri.yaml
+- project/timedeposit.yaml
+- project/purchasing-system.yaml
+- project/security.yaml

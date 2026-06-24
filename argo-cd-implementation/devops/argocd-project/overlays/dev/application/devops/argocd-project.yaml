@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-project
+  labels:
+    name: argocd-project
+    project: devops
+spec:
+  project: devops
+  source:
+    repoURL: "https://git.example.com/devops/kubernetes-manifest.git"
+    targetRevision: HEAD
+    path: devops/argocd-project/overlays/dev
+  destination:
+    name: in-cluster
+    namespace: argocd
+  syncPolicy:
+    automated: {}

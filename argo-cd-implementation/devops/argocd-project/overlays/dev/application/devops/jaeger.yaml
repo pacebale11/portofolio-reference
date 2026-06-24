@@ -1,0 +1,42 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: jaeger
+  labels:
+    name: jaeger
+    project: devops
+spec:
+  project: devops
+  source:
+    repoURL: 'https://jaegertracing.github.io/helm-charts'
+    targetRevision: 0.66.1
+    chart: jaeger
+    helm:
+      parameters:
+      - name: provisionDataStore.cassandra
+        value: 'false'
+      - name: agent.enabled
+        value: 'false'
+      - name: storage.type
+        value: elasticsearch
+      - name: storage.options.es.server-urls
+        value: 'http://host:9200'
+      - name: storage.options.es.index-prefix
+        value: jaeger_
+      - name: storage.options.es.version
+        value: '7'
+      - name: storage.options.es.create-index-templates
+        value: 'false'
+      - name: storage.elasticsearch.host
+        value: '10.0.0.10'
+      - name: storage.elasticsearch.port
+        value: '9200'
+      - name: storage.elasticsearch.user
+        value: devops
+      - name: storage.elasticsearch.password
+        value: 
+  destination:
+    name: in-cluster
+    namespace: monitoring
+  syncPolicy:
+    automated: {}

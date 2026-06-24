@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [ "${CI:-false}" == "true" ]; then
+    terraform fmt -recursive >/dev/null
+    git diff --exit-code > diff.patch || {
+        echo 'Your Terraform files are not formatted properly.' >&2
+        echo 'To help you format your files, we have formatted them automatically.' >&2
+        echo ' ' >&2
+        echo 'The formatted files are available as Git patch file, and can be downloaded' >&2
+        echo 'from the "Job artifacts" section on the left side of this job output.' >&2
+        echo 'Click the "Browse" button and download the `diff.patch` file.' >&2
+        echo 'Then apply the file to your working stage:' >&2
+        echo ' ' >&2
+        echo '    cat <path to the diff.patch file> | git apply' >&2
+        echo '    git status' >&2
+        echo ' ' >&2
+        echo 'Commit the formatted files and push to this repository again.' >&2
+        exit 1
+    }
+else
+    terraform fmt -check -recursive >&2 || {
+        echo ' ' >&2
+        echo 'Files above are not following the `terraform fmt` format.' >&2
+        echo 'Please run `terraform fmt -recursive` and commit the resulting changes.' >&2
+        exit 1
+    }
+fi

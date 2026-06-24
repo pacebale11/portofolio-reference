@@ -1,0 +1,451 @@
+variables:
+  SAST_EXCLUDED_PATHS: "spec,test,tests,tmp"
+  EXCLUDED_RULES: "" # excluded rules for semgrep
+
+.sast-image:
+  image: ${CI_REGISTRY_UTILS}/code-scanning-report:v0.3.6
+
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+
+default:
+  interruptible: true
+
+prepare-code-scan:
+  extends: .sast-image
+  stage: before-test
+  allow_failure: true
+  needs: []
+  variables:
+    GIT_STRATEGY: none
+  before_script:
+    - TODAY=`date +%Y-%m-%d` #start date of engagement, set to today
+    - END_DATE="2999-12-31" #end date of engagement, set to sometime in the future
+  script:
+    - PRODUCT_NAME="${CI_PROJECT_NAME}-${CI_PROJECT_ID}"
+    - |
+      existing_products=$(curl --silent --show-error --fail --location --request GET "${DEFECTDOJO_BASE_API_URL}/products?name=${PRODUCT_NAME}" \
+        --header "Authorization: Token ${DEFECTDOJO_TOKEN}")
+    - DEFECTDOJO_PRODUCT_ID=$(jq --arg PRODUCT_NAME "$PRODUCT_NAME" '.results[] | select(.name == ($PRODUCT_NAME)).id' <<< "$existing_products")
+    - |
+      if [ -z "$DEFECTDOJO_PRODUCT_ID" ]
+      then
+        echo "creating product"
+
+        new_product=$(curl --location --request POST "${DEFECTDOJO_BASE_API_URL}/products/" \
+          --header "Authorization: Token ${DEFECTDOJO_TOKEN}" \
+          --form "name=\"${PRODUCT_NAME}\"" \
+          --form "description=\"Gitlab Project ID: ${CI_PROJECT_ID}\"" \
+          --form "prod_type=\"${DEFECTDOJO_PRODUCT_TYPE_ID}\"" \
+          --form "enable_full_risk_acceptance=true")
+
+        DEFECTDOJO_PRODUCT_ID=$(jq .id <<< "$new_product")
+
+        # Engagement creation
+        echo "creating engagement"
+        curl --location --request POST "${DEFECTDOJO_BASE_API_URL}/engagements/" \
+          --header "Authorization: Token ${DEFECTDOJO_TOKEN}" \
+          --form "name=\"code-scanning\"" \
+          --form "product=\"${DEFECTDOJO_PRODUCT_ID}\"" \
+          --form "target_start=\"${TODAY}\"" \
+          --form "target_end=\"${END_DATE}\"" \
+          --form "source_code_management_uri=\"${CI_PROJECT_URL}/-/blob/${CI_DEFAULT_BRANCH}\""
+      else
+        echo "product already exists"
+      fi
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: $ENABLE_SCHEDULED_SCAN == "true" && $CI_PIPELINE_SOURCE == "schedule"
+  tags:
+    - host-production
+
+node-dependency-audit-sast:
+  image: node:18-alpine
+  stage: test
+  allow_failure: true
+  needs: []
+  before_script:
+    - apk --update add git
+    - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/".insteadOf "https://gitlab.com/"
+  tags:
+    - host-himem
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - $NODE_CACHE_DIR
+    policy: pull
+  artifacts:
+    paths:
+      - auditjs_report.json
+  script:
+    # Run npm install if node_modules directory does not exist
+    - if [ ! -d "node_modules" ]; then npm install; fi
+    - npx auditjs@latest ossi --json > auditjs_report.json || true
+  rules:
+    - if: $SAST_DISABLED
+      when: never
+    - if: $SAST_EXCLUDED_ANALYZERS =~ /node-dep-audit/
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      exists:
+        - "**/package-lock.json"
+
+yarn-dependency-audit-sast:
+  image: node:18-alpine
+  stage: test
+  allow_failure: true
+  needs: []
+  before_script:
+    - apk --update add git
+    - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/".insteadOf "https://gitlab.com/"
+  tags:
+    - host-himem
+  cache:
+    key:
+      files:
+        - yarn.lock
+    paths:
+      - $NODE_CACHE_DIR
+    policy: pull
+  artifacts:
+    paths:
+      - yarn_audit_report.json
+  script:
+    - yarn audit --json > yarn_audit_report.json || true
+  rules:
+    - if: $SAST_DISABLED
+      when: never
+    - if: $SAST_EXCLUDED_ANALYZERS =~ /yarn-dep-audit/
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      exists:
+        - "**/yarn.lock"
+
+.semgrep-base:
+  extends: .sast-image
+  stage: test
+  allow_failure: true
+  needs: []
+  before_script:
+    - |
+      function explode_param {
+          PARAMS=''
+          IFS=',' read -ra RULES <<< "${2}"
+          for i in "${RULES[@]}"; do
+              PARAMS="${PARAMS} --${1} ${i}"
+          done
+
+          echo $PARAMS
+      }
+  script:
+    - set -o noglob
+    - echo "Using semgrep v$(semgrep --version)"
+    - semgrep scan `explode_param exclude-rule ${EXCLUDED_RULES}` `explode_param exclude ${SAST_EXCLUDED_PATHS}` --json > semgrep-report.json || true
+  artifacts:
+    paths:
+      - semgrep-report.json
+  tags:
+    - host-himem
+
+semgrep:
+  extends: .semgrep-base
+  rules:
+    - if: $ENABLE_SCHEDULED_SCAN
+      when: never
+    - if: $SAST_DISABLED
+      when: never
+    - if: $SAST_EXCLUDED_ANALYZERS =~ /semgrep/
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - "**/*.py"
+        - "**/*.js"
+        - "**/*.jsx"
+        - "**/*.ts"
+        - "**/*.tsx"
+        - "**/*.c"
+        - "**/*.cs"
+        - "**/*.go"
+        - "**/*.php"
+
+semgrep-scheduled:
+  extends: .semgrep-base
+  rules:
+    - if: $SAST_DISABLED
+      when: never
+    - if: $SAST_EXCLUDED_ANALYZERS =~ /semgrep/
+      when: never
+    - if: $ENABLE_SCHEDULED_SCAN == "true" && $CI_PIPELINE_SOURCE == "schedule"
+
+.secret-detection:
+  extends: .sast-image
+  stage: test
+  allow_failure: true
+  needs: []
+  before_script:
+    - |
+      function explode_param {
+          PARAMS=''
+          IFS=',' read -ra RULES <<< "${2}"
+          for i in "${RULES[@]}"; do
+              PARAMS="${PARAMS} --${1} ${i}"
+          done
+
+          echo $PARAMS
+      }
+  script:
+    - set -o noglob
+    - echo "Using detect-secrets v$(detect-secrets --version)"
+    - OPTIONS="--disable-plugin KeywordDetector --disable-plugin HexHighEntropyString --exclude-files "${EXCLUDED_FILES}" `explode_param exclude-secrets ${EXCLUDED_SECRETS}`"
+    - |
+      echo "Running detect-secrets WITHOUT diff for project $CI_PROJECT_ID"
+      detect-secrets scan $OPTIONS > detect-secrets.json
+  artifacts:
+    paths:
+      - detect-secrets.json
+      - .secrets.baseline
+  tags:
+    - host-himem
+
+secret-detection:
+  extends: .secret-detection
+  variables:
+    EXCLUDED_FILES: "(\\.git/.*)|(node_modules/.*)"
+  rules:
+    - if: $SECRET_DETECTION_DISABLED
+      when: never
+    - if: $ENABLE_SCHEDULED_SCAN
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+secret-detection-scheduled:
+  extends: .secret-detection
+  variables:
+    EXCLUDED_FILES: "(\\.git/.*)|(node_modules/.*)"
+  rules:
+    - if: $SECRET_DETECTION_DISABLED
+      when: never
+    - if: $ENABLE_SCHEDULED_SCAN == "true" && $CI_PIPELINE_SOURCE == "schedule"
+
+.sast-report:
+  extends: .sast-image
+  stage: test
+  allow_failure: true
+  variables:
+    DD_SCAN_CLOSE_OLD_FINDINGS: "true"
+    GIT_STRATEGY: none
+  before_script:
+    - TODAY=`date +%Y-%m-%d`
+  tags:
+    - host-production
+
+.defectdojo-report: &defectdojo-report
+  - if ! [[ -s ${DD_SCAN_FILE} ]] || ! jq . "${DD_SCAN_FILE}" >/dev/null 2>&1; then exit 1; fi
+  - PRODUCT_NAME="${CI_PROJECT_NAME}-${CI_PROJECT_ID}"
+  - |
+    test_result=$(curl --silent --show-error --fail --location --request POST "${DEFECTDOJO_BASE_API_URL}/reimport-scan/" \
+      --header "Authorization: Token ${DEFECTDOJO_TOKEN}" \
+      --form "scan_date=\"${TODAY}\"" \
+      --form "scan_type=\"${DD_SCAN_TYPE}\"" \
+      --form "product_name=\"${PRODUCT_NAME}\"" \
+      --form "engagement_name=code-scanning" \
+      --form "test_title=\"${TEST_TYPE}\"" \
+      --form "close_old_findings=\"${DD_SCAN_CLOSE_OLD_FINDINGS}\"" \
+      --form "auto_create_context=true" \
+      --form "verified=\"${DD_VERIFIED}\"" \
+      --form "file=@${DD_SCAN_FILE}")
+
+.mr-report: &mr-report
+  - DEFECTDOJO_TEST_ID=$(jq '.test_id' <<< "$test_result")
+  - DEFECTDOJO_PRODUCT_ID=$(jq '.product_id' <<< "$test_result")
+  - get-dd-summary --test-type $TEST_TYPE --dd-test-id $DEFECTDOJO_TEST_ID --dd-pid $DEFECTDOJO_PRODUCT_ID
+
+node-dependency-audit-report:
+  extends: .sast-report
+  needs:
+    - prepare-code-scan
+    - node-dependency-audit-sast
+  variables:
+    TEST_TYPE: "node-modules-audit"
+    DD_SCAN_FILE: "./auditjs_report.json"
+    DD_SCAN_TYPE: "AuditJS Scan"
+    DD_VERIFIED: "true"
+  script:
+    - *defectdojo-report
+    - *mr-report
+  rules:
+    - if: $SAST_DISABLED
+      when: never
+    - if: $SAST_EXCLUDED_ANALYZERS =~ /node-dep-audit/
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      exists:
+        - "**/package-lock.json"
+
+yarn-dependency-audit-report:
+  extends: .sast-report
+  needs:
+    - prepare-code-scan
+    - yarn-dependency-audit-sast
+  variables:
+    TEST_TYPE: "node-modules-audit"
+    DD_SCAN_FILE: "./yarn_audit_report.json"
+    DD_SCAN_TYPE: "Yarn Audit Scan"
+    DD_VERIFIED: "true"
+  script:
+    - *defectdojo-report
+    - *mr-report
+  rules:
+    - if: $SAST_DISABLED
+      when: never
+    - if: $SAST_EXCLUDED_ANALYZERS =~ /yarn-dep-audit/
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      exists:
+        - "**/yarn.lock"
+
+.semgrep-report:
+  extends: .sast-report
+  variables:
+    TEST_TYPE: "semgrep"
+    DD_SCAN_FILE: "./semgrep-report.json"
+    DD_SCAN_TYPE: "Semgrep JSON Report"
+    DD_VERIFIED: "true"
+
+semgrep-report:
+  extends: .semgrep-report
+  needs:
+    - prepare-code-scan
+    - semgrep
+  script:
+    - *defectdojo-report
+    - *mr-report
+  rules:
+    - if: $ENABLE_SCHEDULED_SCAN
+      when: never
+    - if: $SAST_DISABLED
+      when: never
+    - if: $SAST_EXCLUDED_ANALYZERS =~ /semgrep/
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - "**/*.py"
+        - "**/*.js"
+        - "**/*.jsx"
+        - "**/*.ts"
+        - "**/*.tsx"
+        - "**/*.c"
+        - "**/*.cs"
+        - "**/*.go"
+        - "**/*.php"
+
+semgrep-scheduled-report:
+  extends: .semgrep-report
+  needs:
+    - prepare-code-scan
+    - semgrep-scheduled
+  script:
+    - *defectdojo-report
+  rules:
+    - if: $SAST_DISABLED
+      when: never
+    - if: $SAST_EXCLUDED_ANALYZERS =~ /semgrep/
+      when: never
+    - if: $ENABLE_SCHEDULED_SCAN == "true" && $CI_PIPELINE_SOURCE == "schedule"
+
+.secret-detection-report:
+  extends: .sast-report
+  variables:
+    TEST_TYPE: "detect-secrets"
+    DD_SCAN_FILE: "./detect-secrets.json"
+    DD_SCAN_TYPE: "Detect-secrets Scan"
+    DD_VERIFIED: "false"
+
+secret-detection-report:
+  extends: .secret-detection-report
+  needs:
+    - prepare-code-scan
+    - secret-detection
+  script:
+    - *defectdojo-report
+    - *mr-report
+  rules:
+    - if: $SECRET_DETECTION_DISABLED
+      when: never
+    - if: $ENABLE_SCHEDULED_SCAN
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+secret-detection-scheduled-report:
+  extends: .secret-detection-report
+  needs:
+    - prepare-code-scan
+    - secret-detection-scheduled
+  script:
+    - *defectdojo-report
+  rules:
+    - if: $SECRET_DETECTION_DISABLED
+      when: never
+    - if: $ENABLE_SCHEDULED_SCAN == "true" && $CI_PIPELINE_SOURCE == "schedule"
+
+sast-product-grading:
+  extends: .sast-image
+  stage: after-test
+  needs:
+    - job: secret-detection-report
+      optional: true
+    - job: semgrep-report
+      optional: true
+    - job: yarn-dependency-audit-report
+      optional: true
+    - job: node-dependency-audit-report
+      optional: true
+  allow_failure:
+    exit_codes: 100
+  variables:
+    DD_GRADE_THRESHOLD: 'C' #valid value: A, B, C, D F
+    GIT_STRATEGY: none
+  before_script:
+    - PRODUCT_NAME="${CI_PROJECT_NAME}-${CI_PROJECT_ID}"
+  script:
+    - set +e
+    - check-product-grade --threshold $DD_GRADE_THRESHOLD --dd-name $PRODUCT_NAME || EXIT_CODE=$?
+    - exit $EXIT_CODE
+  tags:
+    - host-production
+  rules:
+    - if: $PRODUCT_GRADING_DISABLED
+      when: never
+    - if: $SAST_DISABLED && $SECRET_DETECTION_DISABLED
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+# manual baseline scan job
+semgrep-manual:
+  extends: .semgrep-base
+  rules:
+    - if: $SAST_DISABLED
+      when: never
+    - if: $SAST_EXCLUDED_ANALYZERS =~ /semgrep/
+      when: never
+    - if: ($CI_PIPELINE_SOURCE == "api" || $CI_PIPELINE_SOURCE == "web") && $RUN_MANUAL_SEMGREP
+
+semgrep-manual-report:
+  extends: .semgrep-report
+  rules:
+    - if: $SAST_DISABLED
+      when: never
+    - if: $SAST_EXCLUDED_ANALYZERS =~ /semgrep/
+      when: never
+    - if: ($CI_PIPELINE_SOURCE == "api" || $CI_PIPELINE_SOURCE == "web") && $RUN_MANUAL_SEMGREP
+  script:
+    - *defectdojo-report
+  tags:
+    - host-production

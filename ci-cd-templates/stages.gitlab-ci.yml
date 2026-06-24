@@ -1,0 +1,38 @@
+stages:
+  - before-ci
+
+  - before-test
+  - test
+  - after-test
+
+  - before-build
+  - build
+  - after-build
+
+  - before-deployment-development
+  - canary-development
+  - deployment-development
+  - after-deployment-development
+  - qa-test-development
+
+  - before-deployment-staging
+  - canary-staging
+  - deployment-staging
+  - after-deployment-staging
+  - qa-test-staging
+  - after-qa-test-staging
+
+  - before-deployment-production
+  - canary-production
+  - deployment-production
+  - after-deployment-production
+  - qa-test-production
+  - after-qa-test-production
+
+  ######################################################
+
+  # qa stage after all qa jobs finished
+  - process-qa-report
+  - send-qa-report
+
+  - after-ci

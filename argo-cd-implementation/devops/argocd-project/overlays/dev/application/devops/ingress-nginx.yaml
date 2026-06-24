@@ -1,0 +1,16 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ingress-nginx
+  labels:
+    name: ingress-nginx
+    project: devops
+spec:
+  project: devops
+  source:
+    repoURL: "https://git.example.com/devops/kubernetes-manifest.git"
+    targetRevision: HEAD
+    path: devops/ingress-nginx/overlays/dev
+  destination:
+    name: in-cluster
+    namespace: ingress-nginx

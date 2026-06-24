@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gitlab-mr-bot
+  labels:
+    name: gitlab-mr-bot
+    project: devops
+spec:
+  project: devops
+  source:
+    repoURL: "https://git.example.com/devops/kubernetes-manifest.git"
+    targetRevision: HEAD
+    path: devops/gitlab-mr-bot
+  destination:
+    name: in-cluster
+    namespace: argocd
+  syncPolicy:
+    automated: {}
