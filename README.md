@@ -8,8 +8,3 @@ This repository contains selected DevOps and cloud infrastructure references fro
 - `aws-codebuild-cache-implementation/` — AWS CodeBuild buildspec example with Gradle cache and Firebase App Distribution flow.
 - `ci-cd-templates/` — reusable GitLab CI/CD templates for build, deployment, and security scanning.
 - `terraform-modules-reference/` — Terraform module references for GKE, Cloud SQL, GCS, and Compute Engine.
-
-## Notes
-
-Sensitive values, internal domains, and private repository URLs have been replaced with safe placeholders such as `example.internal` and `git.example.com`.
-
