@@ -14,7 +14,7 @@ data:
     - on-sync-status-unknown
     - on-sync-succeeded
   context: |
-    argocdUrl: https://argocd-dev.aladinbank.id
+    argocdUrl: https://argocd-dev.id
   template.app-created: |
     message: Application {{.app.metadata.name}} has been created.
   template.app-deleted: |

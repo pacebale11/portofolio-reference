@@ -36,4 +36,4 @@ module "gcs_<bucket name>" {
     - Leave the **Release name** field empty; it will automatically use the Git tag name;
     - On the **Release notes** field, put the changelog entry for this version from `CHANGELOG.md`.
 3. Click the **Create release** button.
-4. Announce the new version release on [#kuli-kabel internal Slack channel](https://merdeka-host.slack.com/archives/G01L2H9GTFZ).
+4. Announce the new version release on [internal Slack channel]
